@@ -4,8 +4,10 @@ export default async function handler(req, res) {
   const { ticker, term, depth, seed } = req.body;
   if (!ticker) return res.status(400).json({ error: '종목명을 입력해주세요.' });
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'API 키가 설정되지 않았습니다.' });
+
+  const today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
 
   const prompt = `당신은 골드만삭스 10년 경력 수석 애널리스트이자 국내 주식 단기 트레이딩 전문가입니다.
 
@@ -13,13 +15,13 @@ export default async function handler(req, res) {
 투자 기간: ${term || '단기(1~5일)'}
 분석 깊이: ${depth || '표준 분석'}
 시드머니: ${seed || '100만원'}
-분석 기준일: 오늘 (최신 정보 기준)
+분석 기준일: ${today}
 
-웹 검색으로 최신 정보를 수집한 뒤, 아래 형식으로 리포트를 작성하세요.
-추상적 표현 금지 — 모든 가격은 원화로 구체적으로 제시. 초보 투자자도 이해할 수 있게.
+아래 형식으로 트레이딩 분석 리포트를 작성하세요.
+추상적 표현 금지, 모든 가격은 원화로 구체적으로 제시. 초보 투자자도 이해할 수 있게.
 
 ## 1. 기업 개요 & 현재 주가
-- 현재 주가 / 52주 고·저 / 시가총액
+- 최근 주가 수준 / 52주 고·저 / 시가총액
 - 사업 구조 한 줄 요약
 
 ## 2. 경쟁력 & 리스크
@@ -47,21 +49,29 @@ export default async function handler(req, res) {
 - 3줄 요약
 - 초보자를 위한 한 줄 결론
 
-출처 명시 (증권사 리포트명, 뉴스 날짜 포함).`;
+실시간 데이터가 없는 경우 알고 있는 최신 정보 기준으로 작성하고, 투자자가 추가 확인해야 할 사항을 명시하세요.`;
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
+        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'llama-3.3-70b-versatile',
         max_tokens: 4000,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7,
+        messages: [
+          {
+            role: 'system',
+            content: '당신은 한국 주식 시장 전문 애널리스트입니다. 항상 한국어로 답변하며, 구체적인 수치와 근거를 바탕으로 분석합니다.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
       }),
     });
 
@@ -71,10 +81,8 @@ export default async function handler(req, res) {
     }
 
     const data = await response.json();
-    const text = data.content
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
-      .join('\n');
+    const text = data.choices?.[0]?.message?.content || '';
+    if (!text) return res.status(500).json({ error: '응답을 받지 못했습니다.' });
 
     return res.status(200).json({ report: text });
   } catch (e) {
